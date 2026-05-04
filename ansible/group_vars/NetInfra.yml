@@ -1,0 +1,389 @@
+---
+###############################################################################
+#
+#   NetInfra group_vars reference:
+#   - This file is shared by the ansible/roles/bind9 and ansible/roles/kea
+#     roles. DNS zone data and DHCP reservations both come from the Hosts list.
+#   - It is recommended to keep Host entries in alphabetical order by hostname, with a blank line
+#     between entries when practical.
+#   - "star" is a reserved token in host names and is rendered as "*" in
+#     generated Bind forward zone files.
+#   - "___" is a reserved token in host names and is removed in generated Bind
+#     forward zone files.
+#   - Bind defaults used when a zone or record omits values are defined in
+#     ansible/roles/bind9/defaults/main.yml.
+#
+#   Top-level sections:
+#   - dhcp_servers: Kea HA peers. Kea matches the current host by
+#     ansible_default_ipv4.address, derives that server's env, and includes only
+#     DHCP peers and subnets in the same env. role is rendered into the Kea HA
+#     peer config.
+#   - dns_servers: Bind server inventory and Kea global DNS option source.
+#     Bind matches ansible_fqdn to name to decide whether the server is
+#     master/primary, slave/secondary, or resolver. master/primary names become
+#     SOA/NS primaries; slave/secondary names become NS secondaries. IPs are
+#     used for transfer ACLs and Kea domain-name-servers option-data.
+#   - external_dns_servers: Additional IPs allowed to receive zone transfers
+#     from Bind masters and listed in also-notify.
+#   - time_servers: IPs rendered into Kea ntp-servers option-data.
+#   - tftp_server: Global Kea next-server value for PXE booting. A subnet-level
+#     next_server overrides this for that subnet.
+#   - subnets: Kea subnet4 definitions. Kea filters these by env. cidr,
+#     subnet_mask, routers, dns_servers, pools, next_server, DHCP_Options, and
+#     required_client_classes map directly into the generated Kea JSON. The Kea
+#     template also renders subnet.id; vlan_id is inventory metadata unless the
+#     template is updated to use it.
+#   - zones: Bind forward zones. Each name creates a zone stanza in named.conf.
+#     On masters, zones without file also get a generated forward zone file.
+#     file lets multiple zone names use the same zone file. ttl, refresh, retry,
+#     expire, min_ttl, and allow_update can override Bind defaults.
+#   - rzones: Bind reverse zones. name creates the reverse zone stanza and
+#     regex selects A/PTR-eligible host records whose Target IP belongs in that
+#     reverse file. context controls how many trailing IP octets are written in
+#     the PTR owner name; default is 1.
+#   - Hosts: Authoritative source for DNS records and DHCP reservations.
+#     Bind uses Records to generate forward records and reverse PTRs. Kea uses
+#     Records with MAC and Target values inside a subnet cidr to generate host
+#     reservations.
+#
+#   Host record fields:
+#   - ZoneName: Forward zone the DNS record belongs to. Reverse PTR generation
+#     uses this as the hostname suffix.
+#   - Source: DNS owner name. Defaults to the host Name.
+#   - AltHostName: Alternate hostname used by Bind forward/PTR output and by
+#     Kea reservation hostname. Defaults to the host Name.
+#   - TTL: Per-record DNS TTL. Defaults to the zone TTL.
+#   - RRType: DNS resource record type. Defaults to A. no_dns suppresses Bind
+#     output while still allowing Kea to consume MAC/Target for DHCP unless
+#     Block_DHCP is true. PTR affects reverse-zone handling.
+#   - Target: Record value. For A records and Kea reservations this is the IP
+#     address; for CNAME/TXT/SRV/etc. it is the record-specific target/value.
+#   - Priority, Weight, Port: SRV-related fields rendered by the Bind forward
+#     zone template; they default to blank for other RR types.
+#   - Comment: Rendered at the end of Bind forward records for grouping and
+#     human context. Defaults to blank.
+#   - MAC: Required for Kea DHCP reservations. Records without MAC are ignored
+#     by Kea reservation generation.
+#   - DHCP_Options: Per-record or per-subnet Kea DHCP options. Option keys use
+#     underscores here and are converted to Kea hyphenated option names.
+#   - Block_DHCP: When true, the MAC is added to Kea's blacklisted-macs class
+#     and no reservation is emitted for that record.
+#
+###############################################################################
+
+# Internal DHCP servers used by the Kea role for HA peer discovery.
+dhcp_servers:
+  - name: dhcp1
+    ip: 192.168.0.11
+    role: primary
+    env: prod
+  - name: dhcp2
+    ip: 192.168.0.12
+    role: standby
+    env: prod
+  - name: dhcp-d1
+    ip: 10.10.10.11
+    role: primary
+    env: dev
+  - name: dhcp-d2
+    ip: 10.10.10.12
+    role: standby
+    env: dev
+
+# Internal DNS servers used by Bind for server role/SOA/NS/ACL generation and
+# by Kea for the global domain-name-servers DHCP option.
+dns_servers:
+  - name: dns-a.my.company.com
+    ip: 192.168.0.13
+    role: primary
+  - name: dns-b.my.company.com
+    ip: 192.168.0.14
+    role: secondary
+  - name: dns1.my.company.com
+    ip: 10.10.10.13
+    role: resolver
+  - name: dns2.my.company.com
+    ip: 10.10.10.14
+    role: resolver
+    
+# External DNS servers that Bind masters allow as transfer recipients and notify
+# when zones change.
+external_dns_servers:
+  - 1.1.1.1
+  - 8.8.8.8
+
+# Time servers rendered into Kea's global ntp-servers DHCP option.
+time_servers:
+  - name: time-a-g.nist.gov
+    ip: 129.6.15.28
+  - name: time-b-g.nist.gov
+    ip: 129.6.15.29
+
+# Internal PXE/TFTP server rendered as Kea's global next-server value.
+tftp_server: 10.10.0.11
+
+# Subnets served by Kea. env selects which DHCP HA pair receives the subnet.
+# Kea expects an id field for each subnet in the rendered config; vlan_id is
+# useful inventory metadata but is not currently read as the Kea subnet id.
+subnets:
+  - vlan_id: 192
+    env: prod
+    cidr: 192.168.0.0/25
+    dns_servers: "10.10.10.13, 10.10.10.14, 8.8.8.8"
+    subnet_mask: 255.255.255.0
+    routers: 192.168.0.1
+    next_server: 192.168.0.11
+    pools:
+      - "192.168.0.100-192.168.0.200"
+  - vlan_id: 10
+    env: dev
+    cidr: 10.10.10.0/24
+    dns_servers: "10.10.10.13, 10.10.10.14, 8.8.8.8"
+    subnet_mask: 255.255.255.0
+    routers: 10.10.10.1
+    required_client_classes:
+      - "development"
+    pools:
+      - "10.10.10.100-10.10.10.200"
+
+# Bind forward zones.
+# name - DNS zone name and named.conf zone stanza.
+# base_serial - Historical migration value; current templates use epoch serials.
+# file - Shared zone file name for aliases of another zone. Zones with file do
+#        not get their own generated forward zone file on masters.
+zones:
+  - name: my.company.com
+    base_serial: 202604121956
+  - name: subsidiary.company.com
+    file: my.company.com
+  - name: internal.company.com
+
+# Bind reverse zones.
+# regex - Prefix used to select Host records whose Target IP belongs here.
+# context - Number of right-hand IP octets used in PTR owner names. Defaults to
+#           1 when omitted. Examples: /24 uses context 1; /16 uses context 2.
+rzones:
+  - name: 0.168.192.in-addr.arpa
+    regex: "192.168.0."
+    base_serial: 202604121956
+  - name: 10.10.10.in-addr.arpa
+    regex: "10.10.10."
+    base_serial: 202604121956
+
+# Hosts and records consumed by both roles.
+# Bind creates forward records from Records whose ZoneName matches a forward
+# zone and RRType is not PTR/no_dns. Bind creates reverse PTRs from A/PTR-like
+# records whose Target matches an rzones regex. Kea creates DHCP reservations
+# from records with MAC and a Target IP inside a served subnet.
+Hosts:
+  - Name: my.company.com.
+    Records:
+      - ZoneName: my.company.com
+        Target: 192.168.0.101
+        TTL: 600
+        Comment: Primary Domain
+      - ZoneName: subsidiary.company.com
+        Target: 192.168.0.102
+        TTL: 600
+        Comment: Subsidiary Domain
+      - ZoneName: my.company.com
+        Source: my.company.com.
+        RRType: TXT
+        Target: 'duo_sso_verification=arandomstringofnumbers'
+        Comment: DUO_Verification
+      - ZoneName: my.company.com
+        Source: my.company.com.
+        RRType: TXT
+        Target: 'google-site-verification=-arandomstringofnumbers'
+        Comment: Google Postmaster Tools
+  - Name: dhcp-d1
+    Records:
+      - ZoneName: internal.company.com
+        Target: 10.10.10.11
+        MAC: 02:26:99:da:6e:83
+        Comment: INFRA-DEV
+  - Name: dhcp-d2
+    Records:
+      - ZoneName: internal.company.com
+        Target: 10.10.10.12
+        MAC: 02:e7:17:4b:f9:59
+        Comment: INFRA-DEV
+  - Name: dhcp1
+    Records:
+      - ZoneName: my.company.com
+        Target: 192.168.0.11
+        MAC: 02:04:31:67:22:56
+        Comment: INFRA
+  - Name: dhcp2
+    Records:
+      - ZoneName: my.company.com
+        Target: 192.168.0.12
+        MAC: 02:ec:26:68:67:ca
+        Comment: INFRA
+  - Name: dns-a
+    Records:
+      - ZoneName: my.company.com
+        Target: 192.168.0.13
+        MAC: 02:12:0f:e9:a7:0d
+        Comment: DNS Public Authoritative Primary
+  - Name: dns-b
+    Records:
+      - ZoneName: my.company.com
+        Target: 192.168.0.14
+        MAC: 02:0a:a5:78:bb:c2
+        Comment: DNS Public Authoritative Secondary
+  - Name: dns1
+    Records:
+      - ZoneName: my.company.com
+        Target: 10.10.10.13
+        MAC: 02:37:f8:6c:15:7a
+        Comment: DNS Internal Caching Resolver
+        DHCP_Options:
+          - interface_mtu: 9000
+          - domain_name_servers: "10.10.10.13, 10.10.10.14"
+  - Name: dns2
+    Records:
+      - ZoneName: my.company.com
+        Target: 10.10.10.14
+        MAC: 02:b8:3c:5b:9f:fc
+        Comment: DNS Internal Caching Resolver
+        DHCP_Options:
+          - interface_mtu: 9000
+          - domain_name_servers: "10.10.10.13, 10.10.10.14"
+  - Name: bastion
+    Records:
+      - ZoneName: my.company.com
+        Target: 192.168.0.24
+        MAC: 02:fd:98:60:a4:7a
+        Comment: Bastion
+      - ZoneName: my.company.com
+        Source: login
+        RRType: CNAME
+        Target: bastion
+        Comment: Aliases
+  - Name: login
+    Records:
+      - ZoneName: my.company.com
+        Target: 192.168.0.25
+        MAC: 02:dd:da:ca:05:77
+        Comment: Public Login
+      - ZoneName: subsidiary.company.com
+        Target: 192.168.0.25
+        Comment: Public Login
+      - ZoneName: subsidiary.company.com
+        Source: login
+        RRType: TXT
+        Target: 'arandomstringofalphanumericcharacters'
+        Comment: App Token
+  - Name: k8s
+    Records:
+      - ZoneName: internal.company.com
+        Target: 10.10.10.76
+        MAC: 02:bc:07:20:6a:c3
+        Comment: kubernetes
+      - ZoneName: internal.company.com
+        Target: 10.10.10.90
+        RRType: no_dns
+        MAC: 02:00:e0:47:63:eb
+        Block_DHCP: true
+        Comment: "Disabled Feb 26 2026"
+      - ZoneName: my.company.com
+        AltHostName: kub-mgmt
+        Target: 10.10.10.90
+        RRType: no_dns
+        Comment: "Disabled Feb 26 2026"
+  - Name: _etcd-server-ssl._tcp.kub-prod
+    Records:
+      - ZoneName: my.company.com
+        Target: etcd-0.k8s.my.company.com
+        RRType: SRV
+        Priority: 0
+        Weight: 10
+        Port: 2380
+        TTL: 86400
+      - ZoneName: my.company.com
+        Target: etcd-1.k8s.my.company.com
+        RRType: SRV
+        Priority: 0
+        Weight: 10
+        Port: 2380
+        TTL: 86400
+      - ZoneName: my.company.com
+        Target: etcd-2.k8s.my.company.com
+        RRType: SRV
+        Priority: 0
+        Weight: 10
+        Port: 2380
+        TTL: 86400
+  - Name: management
+    Records:
+      - ZoneName: internal.company.com
+        Target: 10.10.10.10
+        MAC: 02:94:4f:49:3d:ee
+        Comment: Management Node
+      - ZoneName: subsidiary.company.com
+        Target: 10.10.10.10
+        Comment: Management Node
+  - Name: monitoring
+    Records:
+      - ZoneName: internal.company.com
+        Target: 10.10.8.88
+        MAC: 02:b7:67:66:fc:08
+        Comment: Monitoring
+      - ZoneName: internal.company.com
+        Source: prometheus
+        RRType: CNAME
+        Target: monitoring
+        Comment: Aliases
+      - ZoneName: my.company.com
+        Target: 192.168.0.88
+        Comment: monitoring
+      - ZoneName: my.company.com
+        Source: alerts
+        RRType: CNAME
+        Target: monitoring
+        Comment: Aliases
+  - Name: serverA
+    Records:
+      - ZoneName: my.company.com
+        Target: 192.168.1.200
+        MAC: 02:38:20:5d:47:da
+        Comment: Service Host
+  - Name: helpdesk
+    Records:
+      - ZoneName: my.company.com
+        Target: 192.168.0.201
+        MAC: 02:1f:16:5d:23:95
+        Comment: Service Host
+      - ZoneName: my.company.com
+        Source: tickets
+        RRType: CNAME
+        Target: serverb
+        Comment: Ticket Management
+      - ZoneName: subsidiary.company.com
+        Source: selfserve
+        Target: 192.168.0.201
+        Comment: Ticket Management
+  - Name: dev
+    Records:
+      - ZoneName: my.company.com
+        Target: 10.10.10.201
+        Comment: Internal Dev Site
+  - Name: workstation1
+    Records:
+      - ZoneName: my.company.com
+        Target: 10.10.10.240
+        MAC: 02:20:75:a4:e3:47
+        Comment: coffe nodes
+        DHCP_Options:
+          - interface_mtu: 1500
+  - Name: sw01
+    Records:
+      - ZoneName: internal.company.com
+        Target: 192.168.0.2
+        Comment: Switches
+  - Name: sw02
+    Records:
+      - ZoneName: internal.company.com
+        Target: 10.10.10.2
+        Comment: Switches
