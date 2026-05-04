@@ -23,9 +23,10 @@ The original paper is available to be read for free via Open Access on the [ACM 
 - DOI.org link to paper: https://doi.org/10.1145/3491418.3530762
 
 ### Presentation
-The authors gave a presentation of the paper at the conference. A copy of the presentation can be found in this repo.
+The authors gave a presentation of the paper at the conference. The presentation slides can be found in this repo in various formats.
 
-- Presentation link: [PEARC22-NETINFRA.pptx](./presentation/PEARC22-NETINFRA.pptx)
+- Original PowerPoint Presentation: [PEARC22-NETINFRA.pptx](./presentation/PEARC22-NETINFRA.pptx)
+- Slides PDF: [PEARC22-NETINFRA.pdf](./presentation/PEARC22-NETINFRA.pdf)
 
 ---
 
